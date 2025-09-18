@@ -357,7 +357,8 @@ def process_product_selection(message):
         chat_id = message.chat.id
         selection = message.text
         
-        if selection == "A To Z ပစ္စည်းသုံး မည်":
+        # Fix: Use the correct button text for comparison
+        if selection == "A To Z ပစ္စည်းသုံးမည်":
             total_w = user_data[chat_id]['total_w']
             hours = user_data[chat_id]['hours']
             
@@ -370,8 +371,8 @@ def process_product_selection(message):
 
 📝 *စွမ်းအင်သုံးစွဲမှုစာရင်း:*
 • *စုစုပေါင်းဝပ်အား:* {total_w}W
-• *နေ့စဉ်သုံး စွဲမည့်နာရီ:* {hours}h
-• *စုစုပေါင်း စွမ်းအင်သုံးစွဲမှု:* {result['daily_wh']:.0f} Wh/ရက်
+• *နေ့စဉ်သုံးစွဲမည့်နာရီ:* {hours}h
+• *စုစုပေါင်းစွမ်းအင်သုံးစွဲမှု:* {result['daily_wh']:.0f} Wh/ရက်
 
 🏭 *အကြံပြုထားသော ပစ္စည်းများ:*
 
@@ -383,13 +384,13 @@ def process_product_selection(message):
 
 🔋 *ဘက်ထရီ (Dyness):*
    - {result['batteries_needed']} လုံး × {PRODUCT_CATALOG['Dyness'][0]['Model']} ({PRODUCT_CATALOG['Dyness'][0]['Capacity']})
-   - စျေး နှုန်း: {result['battery_cost']:,} ကျပ်
+   - စျေးနှုန်း: {result['battery_cost']:,} ကျပ်
    - အမျိုးအစား: {PRODUCT_CATALOG['Dyness'][0]['Type']}
    - အာမခံ: {PRODUCT_CATALOG['Dyness'][0]['Warranty']}
 
 ⚡ *အင်ဗာတာ (Solis):*
    - 1 လုံး × {result['suitable_inverter']['Model']} ({result['suitable_inverter']['Capacity']})
-   - စျေး နှုန်း: {result['inverter_cost']:,} ကျပ်
+   - စျေးနှုန်း: {result['inverter_cost']:,} ကျပ်
    - အမျိုးအစား: {result['suitable_inverter']['Type']}
    - အာမခံ: {result['suitable_inverter']['Warranty']}
 
@@ -401,8 +402,8 @@ def process_product_selection(message):
 💡 *အထူးအကြံပြုချက်များ:*
    - *LiFePO4 ဘက်ထရီများသည် သက်တမ်းရှည်ပြီး စိတ်ချရမှုရှိသည်*
    - *80% Depth of Discharge အထိ အသုံးပြုနိုင်ပါသည်*
-   - *ဆိုလာပြား များ ကို နေရောင်ကောင်းစွာရသော နေရာတွင် တပ်ဆင်ပါ*
-   - *အင်ဗာတာကို  လေဝင်လေထွက်ကောင်းသော နေရာတွင် ထားရှိပါ*
+   - *ဆိုလာပြားများကို နေရောင်ကောင်းစွာရသော နေရာတွင် တပ်ဆင်ပါ*
+   - *အင်ဗာတာကို လေဝင်လေထွက်ကောင်းသော နေရာတွင် ထားရှိပါ*
 
 📞 *အသေးစိတ်သိရှိလိုပါက ဆက်သွယ်ရန်: Hsu Cho Solar*
             """
@@ -425,8 +426,8 @@ def process_product_selection(message):
             
     except Exception as e:
         print("Error in process_product_selection:", e)
-        bot.reply_to(message, "❌ အမှားတစ်ခုဖြစ်နေပါတယ်")
-
+        bot.reply_to(message, f"❌ အမှားတစ်ခုဖြစ်နေပါတယ်: {str(e)}")
+        
 def process_battery_type(message):
     try:
         chat_id = message.chat.id
@@ -567,4 +568,5 @@ if __name__ == "__main__":
     
     # Start Flask app
     port = int(os.environ.get('PORT', 5000))
+
     app.run(host='0.0.0.0', port=port)
