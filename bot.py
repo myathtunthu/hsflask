@@ -4,9 +4,15 @@ import time
 import os
 from flask import Flask, request
 import threading
+import requests
+import json
+from dotenv import load_dotenv
+
+# ==================== Load environment variables ====================
+load_dotenv()
 
 # ==================== YOUR BOT TOKEN ====================
-BOT_TOKEN = "8234675036:AAFIWLxSxeaT0-VGt_wUwDySCJbHS_0NTN0"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8234675036:AAFIWLxSxeaT0-VGt_wUwDySCJbHS_0NTN0")
 # ========================================================
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -44,11 +50,53 @@ PRODUCT_CATALOG = {
     ]
 }
 
-# Step 1: Calculate total daily energy consumption
+# ==================== DeepSeek API Configuration ====================
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+
+def ask_deepseek(question):
+    """DeepSeek API ကို သုံးပြီး မေးခွန်းမေးမြန်းခြင်း"""
+    if not DEEPSEEK_API_KEY:
+        return "DeepSeek API key မတပ်ဆင်ရသေးပါ။"
+    
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {
+                "role": "system", 
+                "content": """သင်သည် Hsu Cho Solar ၏ အကူအညီပေးသော AI assistant ဖြစ်သည်။ 
+                ဆိုလာစနစ်၊ ဘက်ထရီ၊ အင်ဗာတာ၊ ဆိုလာပြားများ၊ စွမ်းအင်သုံးစွဲမှု တွက်ချက်ခြင်း 
+                နှင့် ဆိုလာစနစ်တပ်ဆင်ခြင်းဆိုင်ရာ အကြောင်းအရာများကို အဓိကထား၍ အကူအညီပေးပါ။
+                မြန်မာဘာသာဖြင့် ရှင်းလင်းစွာ ဖြေကြားပေးပါ။"""
+            },
+            {"role": "user", "content": question}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1000
+    }
+    
+    try:
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=30)
+        response_data = response.json()
+        
+        if response.status_code == 200:
+            return response_data['choices'][0]['message']['content']
+        else:
+            error_msg = response_data.get('error', {}).get('message', 'Unknown error')
+            return f"DeepSeek API error: {error_msg}"
+            
+    except Exception as e:
+        return f"DeepSeek နှင့်ချိတ်ဆက်ရာတွင် အမှားတစ်ခုဖြစ်နေပါသည်: {str(e)}"
+
+# ==================== Solar Calculation Functions ====================
 def calculate_daily_consumption(total_w, hours):
     return total_w * hours
 
-# Step 2: Calculate battery size based on battery type
 def calculate_battery_size(daily_wh, battery_voltage, battery_type="lifepo4"):
     if battery_type.lower() == "lifepo4":
         dod_factor = 0.8
@@ -61,7 +109,6 @@ def calculate_battery_size(daily_wh, battery_voltage, battery_type="lifepo4"):
         battery_ah = (daily_wh / battery_voltage) * (1 / dod_factor)
     return battery_ah, dod_factor
 
-# Step 3: Calculate solar panel requirements
 def calculate_solar_panels(daily_wh, panel_wattage, sun_hours=5, efficiency=0.85):
     solar_w = (daily_wh / sun_hours) * (1 / efficiency)
     num_panels = round(solar_w / panel_wattage)
@@ -69,12 +116,10 @@ def calculate_solar_panels(daily_wh, panel_wattage, sun_hours=5, efficiency=0.85
         num_panels = 1
     return solar_w, num_panels
 
-# Step 4: Calculate inverter size
 def calculate_inverter_size(total_w):
     inverter_w = total_w * 1.3
     return inverter_w
 
-# Step 5: Calculate charge controller size
 def calculate_charge_controller(solar_w, battery_voltage):
     controller_amps = (solar_w / battery_voltage) * 1.25
     if solar_w <= 1000 and battery_voltage <= 24:
@@ -83,26 +128,20 @@ def calculate_charge_controller(solar_w, battery_voltage):
         controller_type = "MPPT"
     return controller_type, controller_amps
 
-# Function to calculate with specific products
 def calculate_with_specific_products(total_w, hours):
     daily_wh = calculate_daily_consumption(total_w, hours)
     
-    # Use Trinasolar 710W panel
     panel_wattage = 710
     solar_w, num_panels = calculate_solar_panels(daily_wh, panel_wattage)
     
-    # Use Dyness battery (51.2V, 280Ah)
     battery_voltage = 51.2
     battery_capacity_ah = 280
     battery_wh = battery_voltage * battery_capacity_ah
     
-    # Calculate how many batteries needed
-    batteries_needed = max(1, round(daily_wh / (battery_wh * 0.8)))  # Using 80% DOD for LiFePO4
+    batteries_needed = max(1, round(daily_wh / (battery_wh * 0.8)))
     
-    # Calculate inverter size
     inverter_w = calculate_inverter_size(total_w)
     
-    # Find suitable Solis inverter
     suitable_inverter = None
     for inverter in PRODUCT_CATALOG["Solis"]:
         capacity_kw = float(inverter["Capacity"].split()[0])
@@ -110,14 +149,11 @@ def calculate_with_specific_products(total_w, hours):
             suitable_inverter = inverter
             break
     
-    # If no suitable inverter found, use the largest one
     if not suitable_inverter:
         suitable_inverter = PRODUCT_CATALOG["Solis"][-1]
     
-    # Calculate charge controller
     controller_type, controller_amps = calculate_charge_controller(solar_w, battery_voltage)
     
-    # Calculate total cost (only retail prices)
     panel_cost = num_panels * int(PRODUCT_CATALOG["Trinasolar"][0]["Retail"].replace(",", ""))
     battery_cost = batteries_needed * int(PRODUCT_CATALOG["Dyness"][0]["Retail"].replace(",", ""))
     inverter_cost = int(suitable_inverter["Retail"].replace(",", ""))
@@ -140,11 +176,11 @@ def calculate_with_specific_products(total_w, hours):
         "total_cost": total_cost
     }
 
+# ==================== Flask Routes ====================
 @app.route('/')
 def home():
     return "Solar Calculator Bot is running!"
 
-# Webhook route for Telegram
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -154,9 +190,7 @@ def webhook():
         return 'OK', 200
     return 'Bad Request', 400
 
-# Set webhook on startup
 def set_webhook():
-    # Get your Render app URL
     render_url = os.environ.get('RENDER_EXTERNAL_URL', 'https://hsuchoflask.onrender.com')
     webhook_url = f"{render_url}/webhook"
     
@@ -168,6 +202,7 @@ def set_webhook():
     except Exception as e:
         print(f"Error setting webhook: {e}")
 
+# ==================== Bot Command Handlers ====================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     try:
@@ -178,12 +213,13 @@ def send_welcome(message):
 
 1. စုစုပေါင်းစွမ်းအင်သုံးစွဲမှု
 2. ဘက်ထရီအရွယ်အစား
-3. ဆို လာပြားလိုအပ်ချက်
+3. ဆိုလာပြားလိုအပ်ချက်
 4. အင်ဗာတာအရွယ်အစား
 5. *Charger Controller*
 
 🔧 *အသုံးပြုနည်း:*
 /calculate - တွက်ချက်ရန်
+/ai - AI ကိုမေးမြန်းရန်
 /help - အကူအညီ
         """
         bot.reply_to(message, welcome_text, parse_mode='Markdown')
@@ -195,9 +231,34 @@ def send_help(message):
     help_text = """
 📖 *အဆင့် ၅ ဆင့်ဖြင့် ဆိုလာစနစ်တွက်ချက်နည်း*
 
-/calculate ကိုနှိပ်ပြီး စတင်တွက်ချက်ပါ။
+/calculate - ဆိုလာစနစ်တွက်ချက်ရန်
+/ai [မေးခွန်း] - AI ကိုမေးမြန်းရန်
+
+*ဥပမာ:*
+/ai ဆိုလာစနစ်အတွက် ဘက်ထရီဘယ်လိုရွေးမလဲ
+/ai ဆိုလာပြားတွေကို ဘယ်လိုသန့်ရှင်းရမလဲ
         """
     bot.reply_to(message, help_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['ai', 'ask'])
+def handle_ai_question(message):
+    try:
+        chat_id = message.chat.id
+        question = message.text.replace('/ai', '').replace('/ask', '').strip()
+        
+        if not question:
+            bot.send_message(chat_id, "❌ ကျေးဇူးပြု၍ မေးခွန်းထည့်ပေးပါ။\n\nဥပမာ:\n/ai ဆိုလာစနစ်အတွက် ဘက်ထရီဘယ်လိုရွေးမလဲ\n/ai ဆိုလာပြားတွေကို ဘယ်လိုသန့်ရှင်းရမလဲ")
+            return
+            
+        bot.send_chat_action(chat_id, 'typing')
+        answer = ask_deepseek(question)
+        
+        response_text = f"🤖 *DeepSeek AI အကြံပြုချက်:*\n\n{answer}\n\n💡 *Hsu Cho Solar*"
+        bot.send_message(chat_id, response_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.send_message(chat_id, "❌ AI စနစ်တွင် အမှားတစ်ခုဖြစ်နေပါသည်")
+        print("Error in DeepSeek handler:", e)
 
 @bot.message_handler(commands=['calculate'])
 def start_calculation(message):
@@ -297,7 +358,7 @@ def handle_wattage_knowledge(message):
 - စက်ကိရိယာ (2000W) = 1 × 2000W = 2000W
 - စုစုပေါင်း = 1500W + 1000W + 2000W = 4500W
 
-🔌 *ကျေးဇူးပြု၍ စုစုပေါင်းဝပ်အား (W) ထည့်ပါ*\n\nဥပမာ: 1500
+🔌 *ကျေးဇူးပြု၍ စုစုပေါင်း�ဝပ်အား (W) ထည့်ပါ*\n\nဥပမာ: 1500
             """
             msg = bot.reply_to(message, wattage_guide, parse_mode='Markdown', reply_markup=types.ReplyKeyboardRemove())
             bot.register_next_step_handler(msg, ask_usage_hours)
@@ -357,22 +418,19 @@ def process_product_selection(message):
         chat_id = message.chat.id
         selection = message.text
         
-        # Fix: Use the correct button text for comparison
-        if selection == "A To Z ပစ္စည်းသုံးမည်":
+        if selection == "A To Z ပစ္စည်းသုံး မည်":
             total_w = user_data[chat_id]['total_w']
             hours = user_data[chat_id]['hours']
             
-            # Calculate with specific products
             result = calculate_with_specific_products(total_w, hours)
             
-            # Format the result
             response = f"""
 📊 *Hsu Cho Solar Calculator - တွက်ချက်မှုရလဒ်များ (A To Z ပစ္စည်းများဖြင့်)*
 
 📝 *စွမ်းအင်သုံးစွဲမှုစာရင်း:*
 • *စုစုပေါင်းဝပ်အား:* {total_w}W
-• *နေ့စဉ်သုံးစွဲမည့်နာရီ:* {hours}h
-• *စုစုပေါင်းစွမ်းအင်သုံးစွဲမှု:* {result['daily_wh']:.0f} Wh/ရက်
+• *နေ့စဉ်သုံး စွဲမည့်နာရီ:* {hours}h
+• *စုစုပေါင်း စွမ်းအင်သုံးစွဲမှု:* {result['daily_wh']:.0f} Wh/ရက်
 
 🏭 *အကြံပြုထားသော ပစ္စည်းများ:*
 
@@ -384,13 +442,13 @@ def process_product_selection(message):
 
 🔋 *ဘက်ထရီ (Dyness):*
    - {result['batteries_needed']} လုံး × {PRODUCT_CATALOG['Dyness'][0]['Model']} ({PRODUCT_CATALOG['Dyness'][0]['Capacity']})
-   - စျေးနှုန်း: {result['battery_cost']:,} ကျပ်
+   - စျေး နှုန်း: {result['battery_cost']:,} ကျပ်
    - အမျိုးအစား: {PRODUCT_CATALOG['Dyness'][0]['Type']}
    - အာမခံ: {PRODUCT_CATALOG['Dyness'][0]['Warranty']}
 
 ⚡ *အင်ဗာတာ (Solis):*
    - 1 လုံး × {result['suitable_inverter']['Model']} ({result['suitable_inverter']['Capacity']})
-   - စျေးနှုန်း: {result['inverter_cost']:,} ကျပ်
+   - စျေး နှုန်း: {result['inverter_cost']:,} ကျပ်
    - အမျိုးအစား: {result['suitable_inverter']['Type']}
    - အာမခံ: {result['suitable_inverter']['Warranty']}
 
@@ -402,13 +460,12 @@ def process_product_selection(message):
 💡 *အထူးအကြံပြုချက်များ:*
    - *LiFePO4 ဘက်ထရီများသည် သက်တမ်းရှည်ပြီး စိတ်ချရမှုရှိသည်*
    - *80% Depth of Discharge အထိ အသုံးပြုနိုင်ပါသည်*
-   - *ဆိုလာပြားများကို နေရောင်ကောင်းစွာရသော နေရာတွင် တပ်ဆင်ပါ*
-   - *အင်ဗာတာကို လေဝင်လေထွက်ကောင်းသော နေရာတွင် ထားရှိပါ*
+   - *ဆိုလာပြား များ ကို နေရောင်ကောင်းစွာရသော နေရာတွင် တပ်ဆင်ပါ*
+   - *အင်ဗာတာကို  လေဝင်လေထွက်ကောင်းသော နေရာတွင် ထားရှိပါ*
 
-📞 *အသေးစိတ်သိရှိလိုပါက ဆက်သွယ်ရန်: Hsu Cho Solar*
+📞 *အသေးစိတ်သိ�ရှိလိုပါက ဆက်သွယ်ရန်: Hsu Cho Solar*
             """
             
-            # Add "Calculate Again" button
             markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
             markup.add(types.KeyboardButton("🔄 ထပ်တွက်ရန်"))
             
@@ -426,8 +483,8 @@ def process_product_selection(message):
             
     except Exception as e:
         print("Error in process_product_selection:", e)
-        bot.reply_to(message, f"❌ အမှားတစ်ခုဖြစ်နေပါတယ်: {str(e)}")
-        
+        bot.reply_to(message, "❌ အမှားတစ်ခုဖြစ်နေပါတယ်")
+
 def process_battery_type(message):
     try:
         chat_id = message.chat.id
@@ -542,12 +599,11 @@ def process_battery_voltage(message):
         
         result += """
    - *ဆိုလာပြားများကို နေရောင်ကောင်းစွာရသော နေရာတွင် တပ်ဆင်ပါ*
-   - *အင်ဗာတာကို လေဝင်လေထွက်ကောင်းသော နေရာတွင် ထားရှိပါ*
+   - *အင်ဗာတာကို လေဝင်�လေထွက်ကောင်းသော နေရာတွင် ထားရှိပါ*
 
 📞 *အသေးစိတ်သိရှိလိုပါက ဆက်သွယ်ရန်: Hsu Cho Solar*
 """
         
-        # Add "Calculate Again" button
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
         markup.add(types.KeyboardButton("🔄 ထပ်တွက်ရန်"))
         
@@ -558,15 +614,42 @@ def process_battery_voltage(message):
         bot.reply_to(message, "❌ အမှားတစ်ခုဖြစ်နေပါတယ်")
 
 # Handle "Calculate Again" button
-@bot.message_handler(func=lambda message: message.text == "🔄 ထပ်တွက်ရန်")
+@bot.message_handler(func=lambda message: message.text == "🔄 ထပ်�တွက်ရန်")
 def handle_calculate_again(message):
     start_calculation(message)
 
+# အလိုအလျောက် AI response (ဆိုလာနဲ့ပတ်သက်တဲ့ မေးခွန်းတွေအတွက်)
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    try:
+        # Command တွေကို ရှောင်ပါ
+        if message.text.startswith('/'):
+            return
+            
+        chat_id = message.chat.id
+        
+        # Solar-related questions ဆိုရင် AI ကိုမေးမြန်းပါ
+        solar_keywords = ['ဆိုလာ', 'ဘက်ထရီ', 'အင်ဗာတာ', 'solar', 'battery', 'inverter', 'charge', 'လျှပ်စစ်', 'မီး']
+        message_lower = message.text.lower()
+        
+        if any(keyword in message_lower for keyword in solar_keywords):
+            bot.send_chat_action(chat_id, 'typing')
+            answer = ask_deepseek(message.text)
+            
+            # တိုတိုလေးဖြေချင်ရင်
+            if len(answer) > 400:
+                answer = answer[:400] + "...\n\n🔍 နောက်ထပ်သိလိုပါက /ai ဖြင့် ထပ်မေးပါ"
+                
+            bot.send_message(chat_id, f"💡 *AI အကြံပြုချက်:*\n\n{answer}\n\n💡 *Hsu Cho Solar*", parse_mode='Markdown')
+            
+    except Exception as e:
+        print("Error in auto AI response:", e)
+
+# ==================== Main Execution ====================
 if __name__ == "__main__":
     # Set webhook on startup
     set_webhook()
     
     # Start Flask app
     port = int(os.environ.get('PORT', 5000))
-
     app.run(host='0.0.0.0', port=port)
